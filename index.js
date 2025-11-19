@@ -9,7 +9,7 @@ const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 app.use(express.json());
 app.use(
   cors({
-    origin: ["http://localhost:3000", "https://smart-task-iota.vercel.app"]
+    origin: ["http://localhost:3000", "https://smart-task-iota.vercel.app","https://smart-task-server.vercel.app"]
   })
 );
 
@@ -192,114 +192,116 @@ async function run() {
 
     // ---------
 
-    app.post("/auto-reassign/:teamId", async (req, res) => {
-      const teamId = req.params.teamId;
+ app.post("/auto-reassign/:teamId", async (req, res) => {
+  const teamId = req.params.teamId;
 
-      try {
-        // 1. Get team and members
-        const team = await teamsCollection.findOne({
-          _id: new ObjectId(teamId),
-        });
-        if (!team)
-          return res
-            .status(404)
-            .send({ success: false, message: "Team not found" });
-
-        const members = team.members;
-
-        // 2. Get all tasks for this team
-        const tasks = await tasksCollection.find({ team_id: teamId }).toArray();
-
-        const activityLogs = [];
-
-        // 3. Find overloaded members
-        const overloadedMembers = members.filter(
-          (member) => member.currentTasks > member.capacity
-        );
-
-        // 4. Get underloaded members
-        const underloadedMembers = members.filter(
-          (member) => member.currentTasks < member.capacity
-        );
-
-        if (underloadedMembers.length === 0)
-          return res.send({
-            success: false,
-            message: "No free capacity to reassign tasks",
-          });
-
-        for (const member of overloadedMembers) {
-          // 5. Get tasks of this member with Low/Medium priority
-          const memberTasks = tasks.filter(
-            (task) =>
-              task.assigned_member?.id === member.id &&
-              (task.priority === "Low" || task.priority === "Medium")
-          );
-
-          // 6. Calculate extra tasks
-          let extra = member.currentTasks - member.capacity;
-
-          for (const task of memberTasks) {
-            if (extra <= 0) break;
-
-            // 7. Find a member with free capacity
-            const freeMember = underloadedMembers.find(
-              (m) => m.currentTasks < m.capacity
-            );
-            if (!freeMember) break;
-
-            // 8. Reassign task
-            await tasksCollection.updateOne(
-              { _id: new ObjectId(task._id) },
-              {
-                $set: {
-                  assigned_member: {
-                    id: freeMember.id,
-                    member_name: freeMember.member_name,
-                  },
-                },
-              }
-            );
-
-            // 9. Update members' currentTasks
-            await teamsCollection.updateOne(
-              { _id: new ObjectId(teamId), "members.id": member.id },
-              { $inc: { "members.$.currentTasks": -1 } }
-            );
-
-            await teamsCollection.updateOne(
-              { _id: new ObjectId(teamId), "members.id": freeMember.id },
-              { $inc: { "members.$.currentTasks": 1 } }
-            );
-
-            // 10. Record activity log
-            activityLogs.push({
-              taskId: task._id,
-              taskTitle: task.title,
-              from: member.member_name,
-              to: freeMember.member_name,
-              time: new Date(),
-            });
-
-            extra--;
-          }
-        }
-
-        // 11. Optionally, save logs to collection
-        if (activityLogs.length > 0) {
-          await activityLogCollection.insertMany(activityLogs);
-        }
-
-        res.send({
-          success: true,
-          message: "Tasks reassigned",
-          logs: activityLogs,
-        });
-      } catch (error) {
-        console.error(error);
-        res.status(500).send({ success: false, message: error.message });
-      }
+  try {
+    //  Get team and members
+    const team = await teamsCollection.findOne({
+      _id: new ObjectId(teamId),
     });
+    if (!team)
+      return res
+        .status(404)
+        .send({ success: false, message: "Team not found" });
+
+    const members = team.members;
+
+    // Get all tasks for this team
+    const tasks = await tasksCollection.find({ team_id: teamId }).toArray();
+
+    const activityLogs = [];
+
+    //  Find overloaded members
+    const overloadedMembers = members.filter(
+      (member) => member.currentTasks > member.capacity
+    );
+
+    //  Get underloaded members
+    const underloadedMembers = members.filter(
+      (member) => member.currentTasks < member.capacity
+    );
+
+    if (underloadedMembers.length === 0)
+      return res.send({
+        success: false,
+        message: "No free capacity to reassign tasks",
+      });
+
+    for (const member of overloadedMembers) {
+      // Get tasks of this member with Low/Medium priority
+      const memberTasks = tasks.filter(
+        (task) =>
+          task.assigned_member?.id === member.id &&
+          (task.priority === "Low" || task.priority === "Medium")
+      );
+
+      //  Calculate extra tasks
+      let extra = member.currentTasks - member.capacity;
+
+      for (const task of memberTasks) {
+        if (extra <= 0) break;
+
+        //  Find a member with free capacity
+        const freeMember = underloadedMembers.find(
+          (m) => m.currentTasks < m.capacity
+        );
+        if (!freeMember) break;
+
+        //  Reassign task
+        await tasksCollection.updateOne(
+          { _id: new ObjectId(task._id) },
+          {
+            $set: {
+              assigned_member: {
+                id: freeMember.id,
+                member_name: freeMember.member_name,
+              },
+            },
+          }
+        );
+
+        //  Update members' currentTasks
+        await teamsCollection.updateOne(
+          { _id: new ObjectId(teamId), "members.id": member.id },
+          { $inc: { "members.$.currentTasks": -1 } }
+        );
+
+        await teamsCollection.updateOne(
+          { _id: new ObjectId(teamId), "members.id": freeMember.id },
+          { $inc: { "members.$.currentTasks": 1 } }
+        );
+
+        //  Record activity log with owner_email
+        activityLogs.push({
+          taskId: task._id,
+          taskTitle: task.title,
+          from: member.member_name,
+          to: freeMember.member_name,
+          team_owner_email: team.owner_email,
+          time: new Date(),
+        });
+
+        extra--;
+      }
+    }
+
+    // save logs to collection
+    if (activityLogs.length > 0) {
+      await activityLogCollection.insertMany(activityLogs);
+    }
+
+    res.send({
+      success: true,
+      message: "Tasks reassigned",
+      logs: activityLogs,
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).send({ success: false, message: error.message });
+  }
+});
+
 
     app.get("/get-activity-log", async (req, res) => {
       const result = await activityLogCollection.find().toArray();
