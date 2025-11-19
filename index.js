@@ -33,6 +33,7 @@ async function run() {
     // !database collection
     const teamsCollection = client.db("SmartTask_Db").collection("Teams");
     const projectCollection = client.db("SmartTask_Db").collection("Projects");
+    const tasksCollection = client.db("SmartTask_Db").collection("Tasks");
 
     // ! Team Related api
 
@@ -51,7 +52,7 @@ async function run() {
 
     app.post("/add-team_member", async (req, res) => {
       try {
-        const { teamId, member_name, role, capacity } = req.body;
+        const { teamId, member_name, role, capacity,currentTasks } = req.body;
 
         // Generate random member ID
         const randomId = "mem_" + Math.random().toString(36).substring(2, 10);
@@ -61,6 +62,7 @@ async function run() {
           member_name,
           role,
           capacity,
+          currentTasks,
           date: new Date(),
         };
 
@@ -88,6 +90,50 @@ async function run() {
       const result = await projectCollection.find().toArray();
       res.send(result);
     });
+
+
+
+
+    // ! task realated api
+
+    app.post("/create-task", async (req, res) => {
+  try {
+    const taskData = req.body;
+
+    const result = await tasksCollection.insertOne(taskData);
+
+    if (result.insertedId) {
+   
+      if (taskData.assigned_member && taskData.assigned_member.id !== "Unassigned") {
+        // Update member's currentTasks +1
+        const teamId = taskData.team_id;
+        const memberId = taskData.assigned_member.id;
+
+        const updateResult = await teamsCollection.updateOne(
+          { _id: new ObjectId(teamId), "members.id": memberId },
+          { $inc: { "members.$.currentTasks": 1 } } 
+        );
+
+        console.log("Member currentTasks updated:", updateResult.modifiedCount);
+      }
+
+      res.send({ insertedId: result.insertedId, success: true });
+    } else {
+      res.status(500).send({ success: false, message: "Task not added!" });
+    }
+  } catch (error) {
+    console.log(error);
+    res.status(500).send({ success: false, message: error.message });
+  }
+});
+
+
+
+app.get('/get-all-tasks',async(req,res) => {
+   const result = await tasksCollection.find().toArray();
+
+    res.send(result)
+})
 
 
 
